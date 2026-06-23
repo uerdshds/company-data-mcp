@@ -21,7 +21,7 @@
     }
   }
 }
-```
+
 
 工具：`reconcile_company_tables(file_a, file_b, name_threshold=85, date_tolerance_days=0, ...)`。
 

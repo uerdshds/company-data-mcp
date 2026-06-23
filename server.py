@@ -29,11 +29,11 @@ from mcp.server.fastmcp import FastMCP
 from matcher import load_table, reconcile
 
 PORT = int(os.environ.get("PORT", "8000"))
-# 魔搭托管端点是 /<id>/mcp, 故默认路径用 /mcp; 本地+ngrok 时可改成 /message
+
 HTTP_PATH = os.environ.get("MCP_HTTP_PATH", "/mcp")
-# 传输: streamable-http(默认, DEAP/魔搭) 或 stdio(魔搭 FC 运行时若需 stdio 包装)
+
 TRANSPORT = os.environ.get("MCP_TRANSPORT", "streamable-http")
-API_KEY = os.environ.get("MCP_API_KEY")  # 留空则不鉴权
+API_KEY = os.environ.get("MCP_API_KEY")  
 
 mcp = FastMCP(
     "company-reconcile",
@@ -43,9 +43,7 @@ mcp = FastMCP(
 )
 
 
-# --------------------------------------------------------------------------- #
 # 文件获取: 支持 http(s) URL (钉盘下载链接) 或本地路径
-# --------------------------------------------------------------------------- #
 def _fetch(file_ref: str) -> tuple[bytes, str]:
     """返回 (文件字节, 文件名)。URL 则下载, 否则按本地路径读。"""
     if file_ref.lower().startswith(("http://", "https://")):
@@ -62,9 +60,8 @@ def _fetch(file_ref: str) -> tuple[bytes, str]:
         return f.read(), os.path.basename(file_ref)
 
 
-# --------------------------------------------------------------------------- #
 # 工具: 公司名 + 日期 对碰
-# --------------------------------------------------------------------------- #
+
 @mcp.tool(
     title="公司名对碰",
     annotations={"readOnlyHint": True, "openWorldHint": True},
@@ -109,9 +106,9 @@ def reconcile_company_tables(
     }
 
 
-# --------------------------------------------------------------------------- #
+
 # 启动: 带可选的 X-Api-Key 鉴权中间件
-# --------------------------------------------------------------------------- #
+
 def main() -> None:
     # stdio: 供魔搭 FC 运行时包装 (无网络端口)
     if TRANSPORT == "stdio":

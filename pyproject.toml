@@ -9,13 +9,15 @@ description = "按公司名+日期模糊对碰两份表格(Excel/CSV/PDF)的 MCP
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.2.0",
-    "pandas>=2.0",
     "openpyxl>=3.1",
-    "pdfplumber>=0.11",
     "rapidfuzz>=3.6",
     "python-dateutil>=2.9",
     "requests>=2.31",
 ]
+
+[project.optional-dependencies]
+# PDF 解析为可选 (pdfplumber 连带 cryptography 等重依赖, 默认不装以加快冷启动)
+pdf = ["pdfplumber>=0.11"]
 
 [project.scripts]
 # 魔搭"启动命令"用这个; 以 stdio 启动, 平台包装成 /mcp HTTP 端点

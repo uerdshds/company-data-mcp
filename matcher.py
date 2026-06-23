@@ -5,10 +5,13 @@
       -> 日期分桶(blocking) -> 桶内 rapidfuzz 名称匹配 -> 三档输出。
 
 本模块与 MCP / DEAP 完全解耦, 可单独 import 测试。
+依赖已瘦身: 仅 openpyxl(读xlsx) + 标准库 csv; PDF 走可选依赖 pdfplumber。
 """
 from __future__ import annotations
 
+import csv
 import io
+import math
 import os
 import re
 import unicodedata
@@ -16,7 +19,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
-import pandas as pd
 from dateutil import parser as dateparser
 from rapidfuzz import fuzz, process
 
@@ -42,13 +44,23 @@ COMPANY_SUFFIXES = [
     "company", "limited",
 ]
 
+
+def _isna(v: Any) -> bool:
+    """空值判断 (None / NaN)。"""
+    if v is None:
+        return True
+    if isinstance(v, float) and math.isnan(v):
+        return True
+    return False
+
+
 # --------------------------------------------------------------------------- #
 # 2. 数据结构
 # --------------------------------------------------------------------------- #
 @dataclass
 class TableSpec:
     """一张待对碰的表。"""
-    rows: list[dict[str, Any]]          # 原始行
+    rows: list[dict[str, Any]]          # 原始行 (已定位表头后的记录)
     name_col: str
     date_col: str
 
@@ -62,27 +74,53 @@ class MatchResult:
 
 
 # --------------------------------------------------------------------------- #
-# 3. 读取: Excel / CSV / PDF -> DataFrame (含表头识别)
+# 3. 读取: Excel / CSV / PDF -> 二维行列表 (含表头识别)
 # --------------------------------------------------------------------------- #
-def _read_raw(path_or_bytes: Any, filename: str) -> pd.DataFrame:
-    """按扩展名读成"无表头"的二维 DataFrame, 后续再识别表头行。"""
-    ext = os.path.splitext(filename)[1].lower()
-    if ext in (".xlsx", ".xls", ".xlsm"):
-        return pd.read_excel(path_or_bytes, header=None, dtype=object)
-    if ext in (".csv", ".tsv", ".txt"):
-        sep = "\t" if ext == ".tsv" else None
-        if isinstance(path_or_bytes, (bytes, bytearray)):
-            path_or_bytes = io.BytesIO(path_or_bytes)
-        return pd.read_csv(path_or_bytes, header=None, dtype=object,
-                           sep=sep, engine="python")
-    if ext == ".pdf":
-        return _read_pdf_table(path_or_bytes)
-    raise ValueError(f"不支持的文件类型: {ext} (支持 .xlsx/.xls/.csv/.tsv/.pdf)")
+def _decode(b: bytes) -> str:
+    """中文 CSV 常见编码兜底: utf-8-sig / gbk / utf-8。"""
+    for enc in ("utf-8-sig", "gbk", "utf-8"):
+        try:
+            return b.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return b.decode("utf-8", errors="replace")
 
 
-def _read_pdf_table(path_or_bytes: Any) -> pd.DataFrame:
-    """用 pdfplumber 抽取第一张可识别的表格 (电子版 PDF)。"""
-    import pdfplumber
+def _read_xlsx(path_or_bytes: Any) -> list[list[Any]]:
+    from openpyxl import load_workbook
+    src = io.BytesIO(path_or_bytes) if isinstance(path_or_bytes, (bytes, bytearray)) else path_or_bytes
+    wb = load_workbook(src, read_only=True, data_only=True)
+    try:
+        ws = wb.active
+        return [list(r) for r in ws.iter_rows(values_only=True)]
+    finally:
+        wb.close()
+
+
+def _read_csv(path_or_bytes: Any, ext: str) -> list[list[Any]]:
+    if isinstance(path_or_bytes, (bytes, bytearray)):
+        text = _decode(bytes(path_or_bytes))
+    else:
+        with open(path_or_bytes, "rb") as f:
+            text = _decode(f.read())
+    if ext == ".tsv":
+        delim = "\t"
+    else:
+        try:
+            delim = csv.Sniffer().sniff(text[:2048], delimiters=",;\t").delimiter
+        except Exception:
+            delim = ","
+    return [row for row in csv.reader(io.StringIO(text), delimiter=delim)]
+
+
+def _read_pdf_table(path_or_bytes: Any) -> list[list[Any]]:
+    """用 pdfplumber 抽取表格 (可选依赖)。"""
+    try:
+        import pdfplumber
+    except ImportError as e:
+        raise ValueError(
+            "解析 PDF 需要可选依赖 pdfplumber, 请安装: pip install \"company-reconcile-mcp[pdf]\""
+        ) from e
     src = io.BytesIO(path_or_bytes) if isinstance(path_or_bytes, (bytes, bytearray)) else path_or_bytes
     rows: list[list[Any]] = []
     with pdfplumber.open(src) as pdf:
@@ -91,17 +129,29 @@ def _read_pdf_table(path_or_bytes: Any) -> pd.DataFrame:
                 rows.extend(table)
     if not rows:
         raise ValueError("PDF 中未识别到表格 (可能是扫描件, 需先 OCR)")
-    width = max(len(r) for r in rows)
-    rows = [r + [None] * (width - len(r)) for r in rows]
-    return pd.DataFrame(rows)
+    return rows
 
 
-def _detect_header_row(df: pd.DataFrame, max_scan: int = 15) -> int:
+def _read_raw(path_or_bytes: Any, filename: str) -> list[list[Any]]:
+    """按扩展名读成"无表头"的二维行列表。"""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in (".xlsx", ".xlsm"):
+        return _read_xlsx(path_or_bytes)
+    if ext == ".xls":
+        raise ValueError(".xls 旧格式不支持, 请用 Excel 另存为 .xlsx 后再试")
+    if ext in (".csv", ".tsv", ".txt"):
+        return _read_csv(path_or_bytes, ext)
+    if ext == ".pdf":
+        return _read_pdf_table(path_or_bytes)
+    raise ValueError(f"不支持的文件类型: {ext} (支持 .xlsx/.csv/.tsv/.pdf)")
+
+
+def _detect_header_row(rows: list[list[Any]], max_scan: int = 15) -> int:
     """扫描前若干行, 命中表头别名最多的那行即表头行。"""
     aliases = {a.lower() for a in NAME_HEADER_ALIASES + DATE_HEADER_ALIASES}
     best_row, best_hits = 0, -1
-    for i in range(min(max_scan, len(df))):
-        cells = [str(c).strip().lower() for c in df.iloc[i] if pd.notna(c)]
+    for i in range(min(max_scan, len(rows))):
+        cells = [str(c).strip().lower() for c in rows[i] if not _isna(c)]
         hits = sum(any(a in c or c in a for a in aliases) for c in cells)
         if hits > best_hits:
             best_row, best_hits = i, hits
@@ -115,8 +165,7 @@ def _pick_column(columns: list[str], aliases: list[str],
         for c in columns:
             if str(c).strip() == explicit.strip():
                 return c
-        # 显式列名按包含匹配兜底
-        for c in columns:
+        for c in columns:                       # 显式列名按包含匹配兜底
             if explicit.strip() in str(c):
                 return c
     norm = {c: str(c).strip().lower() for c in columns}
@@ -135,13 +184,20 @@ def load_table(path_or_bytes: Any, filename: str,
                name_col: Optional[str] = None,
                date_col: Optional[str] = None) -> TableSpec:
     """读取一张表并定位名称列 / 日期列。"""
-    raw = _read_raw(path_or_bytes, filename)
-    hdr = _detect_header_row(raw)
-    header = [str(c).strip() if pd.notna(c) else f"col_{j}"
-              for j, c in enumerate(raw.iloc[hdr])]
-    body = raw.iloc[hdr + 1:].copy()
-    body.columns = header
-    body = body.dropna(how="all").reset_index(drop=True)
+    rows = _read_raw(path_or_bytes, filename)
+    if not rows:
+        raise ValueError("文件为空或无法读取到内容")
+
+    hdr = _detect_header_row(rows)
+    header = [str(c).strip() if not _isna(c) else f"col_{j}"
+              for j, c in enumerate(rows[hdr])]
+
+    body: list[dict[str, Any]] = []
+    for r in rows[hdr + 1:]:
+        if all(_isna(c) for c in r):
+            continue
+        body.append({col: (r[j] if j < len(r) else None)
+                     for j, col in enumerate(header)})
 
     n_col = _pick_column(header, NAME_HEADER_ALIASES, name_col)
     d_col = _pick_column(header, DATE_HEADER_ALIASES, date_col)
@@ -150,8 +206,7 @@ def load_table(path_or_bytes: Any, filename: str,
     if d_col is None:
         raise ValueError(f"未能识别日期列, 表头为: {header}。请显式指定 date_col。")
 
-    rows = body.to_dict(orient="records")
-    return TableSpec(rows=rows, name_col=n_col, date_col=d_col)
+    return TableSpec(rows=body, name_col=n_col, date_col=d_col)
 
 
 # --------------------------------------------------------------------------- #
@@ -162,7 +217,7 @@ _PUNCT_RE = re.compile(r"[\s\.\,\-_/\\()\[\]{}（）【】、，。·:：;；'\"
 
 def normalize_company(name: Any, strip_suffix: bool = False) -> str:
     """全角转半角、去标点空格、大写化; 可选剥离组织形式后缀。"""
-    if name is None or (isinstance(name, float) and pd.isna(name)):
+    if _isna(name):
         return ""
     s = unicodedata.normalize("NFKC", str(name)).strip()
     s = _PUNCT_RE.sub("", s)
@@ -179,9 +234,9 @@ def normalize_company(name: Any, strip_suffix: bool = False) -> str:
 
 def parse_date(value: Any) -> Optional[date]:
     """把各种日期写法统一成 date; 失败返回 None。"""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
+    if _isna(value):
         return None
-    if isinstance(value, (datetime, pd.Timestamp)):
+    if isinstance(value, datetime):           # 须在 date 之前 (datetime 是 date 子类)
         return value.date()
     if isinstance(value, date):
         return value
