@@ -3,35 +3,38 @@
 魔搭以 **stdio 启动命令 + 仓库** 的方式托管：平台拉取你的 Gitee 仓库，
 用 `uvx` 安装并以 stdio 启动本服务，再统一包装成 `/<id>/mcp` 的 StreamableHTTP 端点。
 
-## 一、把代码推到 Gitee（你来做）
+## 一、把代码推到 Gitee（✅ 已完成）
 
-1. 登录 Gitee → 新建仓库（**公开**），仓库名建议 `company-reconcile-mcp`，**不要**勾选自动初始化。
-2. 回到本目录执行（把 URL 换成你的仓库地址）：
-   ```bash
-   cd E:/Desktop/code/MCP
-   git remote add origin https://gitee.com/<你的用户名>/company-reconcile-mcp.git
-   git push -u origin main
-   ```
-   （已配好 git 账号 `明人不放屁`；push 时按提示输 Gitee 账号密码 / 私人令牌）
+代码已推送到 `https://gitee.com/zmx_a/mcp.git` 的 `main` 分支。
+
+> 注意：本机有代理 `127.0.0.1:7890`，直接 push 会因代理路由 gitee 到海外而 SSL 报错。
+> 后续更新代码时用**绕过代理**的方式推：
+> ```bash
+> cd E:/Desktop/code/MCP
+> git add -A && git commit -m "..."
+> HTTP_PROXY= HTTPS_PROXY= git -c http.proxy= push origin main
+> ```
+> 另：Gitee 仓库默认分支若是 `master`，建议在 Gitee 仓库设置里把默认分支改成 `main`，
+> 或保持启动命令里的 `@main` 显式指定（已采用后者）。
 
 ## 二、在魔搭"创建 MCP 服务"里填启动命令
 
 服务页面 → 部署/托管环节，类型选 **stdio**，启动命令填：
 
 ```
-uvx --from git+https://gitee.com/<你的用户名>/company-reconcile-mcp.git company-reconcile-mcp
+uvx --from git+https://gitee.com/zmx_a/mcp.git@main company-reconcile-mcp
 ```
 
 若表单是 command/args 分开的结构，则：
 ```json
 {
   "command": "uvx",
-  "args": ["--from", "git+https://gitee.com/<你的用户名>/company-reconcile-mcp.git", "company-reconcile-mcp"]
+  "args": ["--from", "git+https://gitee.com/zmx_a/mcp.git@main", "company-reconcile-mcp"]
 }
 ```
 
 > 备选（若平台无 uvx，只有 pip）：
-> `pip install git+https://gitee.com/<你的用户名>/company-reconcile-mcp.git && company-reconcile-mcp`
+> `pip install git+https://gitee.com/zmx_a/mcp.git && company-reconcile-mcp`
 
 部署成功后，平台会给出端点：`https://mcp.api-inference.modelscope.net/<id>/mcp`
 （你已有 id `9a8d78b7a7f649`）。
