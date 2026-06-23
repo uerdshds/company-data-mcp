@@ -4,6 +4,27 @@
 **AND 逻辑**：名称相似度达标 **且** 日期在容差内才算匹配。结果分三档：
 `已匹配 / 待复核 / 未匹配`，每条带名称相似度分与日期相差天数。
 
+## 运行配置（MCP 客户端 / 魔搭自动解析用）
+
+以 stdio 启动，依赖由 `uvx` 自动安装：
+
+```json
+{
+  "mcpServers": {
+    "company-reconcile": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/uerdshds/company-data-mcp.git@main",
+        "company-reconcile-mcp"
+      ]
+    }
+  }
+}
+```
+
+工具：`reconcile_company_tables(file_a, file_b, name_threshold=85, date_tolerance_days=0, ...)`。
+
 ## 目录结构
 
 | 文件 | 作用 |

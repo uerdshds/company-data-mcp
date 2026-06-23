@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "company-reconcile": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/uerdshds/company-data-mcp.git@main",
+        "company-reconcile-mcp"
+      ]
+    }
+  }
+}
